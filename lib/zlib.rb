@@ -23,6 +23,7 @@ require 'zlib/common'
 require 'zlib/checksum'
 require 'zlib/inflate'
 require 'zlib/deflate'
+require 'zlib/gzip'
 
 if $0 == __FILE__
 	p CZlib::Deflate.deflate('mydatamydata')
