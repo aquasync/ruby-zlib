@@ -141,307 +141,301 @@ module Zlib
 		end
 	end
 
-#== DEFLATE Decompression
-#Implements decompression of a RFC-1951[ftp://ftp.rfc-editor.org/in-notes/rfc1951.txt] compatible stream.
-class Inflate < ZStream
-	def initialize window_bits=MAX_WBITS
-		@w_bits = window_bits	
-		if @w_bits < 0 then 
-			@rawdeflate = true
-			@w_bits *= -1 
-		end	
-		super()
-		@zstring = ""
-	end
-	
-	#Appends data to the input stream
-	def <<(string)
-		@zstring << string
-		inflate
-	end
-	
-	#Sets the inflate dictionary
-	def set_dictionary string
-		@dict = string
-		reset
-	end
-		
-	#==Example
-	# f = File.open "example.z"
-	# i = Inflate.new
-	# i.inflate f.read
-	def inflate zstring=nil
-		@zstring = zstring unless zstring.nil?
-		#We can't use unpack, IronRuby doesn't have it yet.
-		@zstring.each_byte {|b| @input_buffer << b}
-		
-	 	unless @rawdeflate then
-
-		compression_method_and_flags = @input_buffer[@in_pos+=1]
-		flags = @input_buffer[@in_pos+=1]
-		
-		#CMF and FLG, when viewed as a 16-bit unsigned integer stored inMSB order (CMF*256 + FLG), is a multiple of 31
-		if ((compression_method_and_flags << 0x08) + flags) % 31 != 0 then raise Zlib::DataError.new("incorrect header check") end
-		
-		#CM = 8 denotes the “deflate” compression method with a window size up to 32K. (RFC's only specify CM 8)
-		compression_method = compression_method_and_flags & 0x0F 
-		
-		if compression_method != Z_DEFLATED then raise Zlib::DataError.new("unknown compression method") end
-		
-		#For CM = 8, CINFO is the base-2 logarithm of the LZ77 window size,minus eight (CINFO=7 indicates a 32K window size)
-		compression_info = compression_method_and_flags >> 0x04 
-		
-		if (compression_info + 8) > @w_bits then raise Zlib::DataError.new("invalid window size") end
-		
-		preset_dictionary_flag = ((flags & 0x20) >> 0x05) == 1
-		compression_level = (flags & 0xC0) >> 0x06
-		
-		if preset_dictionary_flag and @dict.nil? then raise Zlib::NeedDict.new("Preset dictionary needed!") end
-		
-		#TODO:  Add Preset dictionary support
-		if preset_dictionary_flag then 
-			@dict_crc = @input_buffer[@in_pos+=1] << 24 | @input_buffer[@in_pos+=1] << 16 | @input_buffer[@in_pos+=1] << 8 | @input_buffer[@in_pos+=1]
-		 end
-		
-		end
-		last_block = false
-		#Begin processing DEFLATE stream
-		until last_block
-			last_block = (get_bits(1) == 1)
-			block_type = get_bits(2)
-			case block_type
-				when 0 then no_compression
-				when 1 then fixed_codes
-				when 2 then dynamic_codes
- 				when 3 then raise Zlib::DataError.new("invalid block type")	 
-			end	
-		end
-		finish
-	end
-	
-	#Finishes inflating and flushes the buffer
-	def finish
-		output = ""
-		inflate unless @output_buffer.length > 0
-		@output_buffer.each {|c| output << c } 
-		super
-		output
-	end
-	
-	private
-
-	def no_compression
-		@bit_bucket = 0
-		@bit_count = 0
-		if @in_pos + 4 > @input_buffer.length then raise Zlib::DataError.new("not enough input to read length code") end
-		length = @input_buffer[@in_pos+=1] | (@input_buffer[@in_pos+=1] << 8)
-			
-		if (~length & 0xff != @input_buffer[@in_pos+=1]) || (((~length >> 8) & 0xff) != @input_buffer[@in_pos+=1]) then raise Zlib::DataError.new("invalid stored block lengths") end
-		
-		if @in_pos + length > @input_buffer.length then raise Zlib::DataError.new("ran out of input") end
-				
-		
-		length.times do
-			@output_buffer[@out_pos += 1] = @input_buffer[@in_pos += 1]
-		end
-		   	
-			
-	end
-	
-	def fixed_codes
-		if @fixed_length_codes.nil? && @fixed_distance_codes.nil? then generate_huffmans end 
-		codes @fixed_length_codes, @fixed_distance_codes	
-	end
-	
-	def dynamic_codes		
-		order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
-		nlen = get_bits(5) + 257
-		ndist = get_bits(5) + 1
-		ncode = get_bits(4) + 4
-				
-		lengths=[]
-		dynamic_length_codes = Zlib::Inflate::HuffmanTree.new
-		dynamic_distance_codes = Zlib::Inflate::HuffmanTree.new
-		
-		if (nlen > MAXLCODES || ndist > MAXDCODES) then raise Zlib::DataError.new("too many length or distance codes") end
-		idx = 0
-		
-		while idx < ncode
-			lengths[order[idx]] = get_bits(3)
-			idx += 1
-		end
-		while idx < 19
-			lengths[order[idx]] = 0
-			idx += 1
-		end
-		err = construct_tree dynamic_length_codes, lengths, 18
-		if err != 0 then raise Zlib::DataError.new("code lengths codes incomplete") end
-		
-		idx = 0
-		while idx < (nlen + ndist)
-			symbol = decode(dynamic_length_codes)
-			if symbol < 16 then 
-				lengths[idx] = symbol 
-				idx  += 1;
-			else
-				len = 0
-					if symbol == 16 then 
-						if idx == 0 then raise Zlib::DataError.new("repeat lengths with no first length") end
-						len = lengths[idx - 1]
-						symbol = 3 + get_bits(2)
-					elsif symbol == 17 then
-						symbol = 3 + get_bits(3)
-					elsif symbol == 18 then 
-						symbol = 11 + get_bits(7)
-					else
-						raise Zlib::DataError.new("invalid repeat length code")
-					end
-				if (idx + symbol) > (nlen + ndist) then raise Zlib::DataError.new("repeat more than specified lengths") end
-				until symbol == 0
-					lengths[idx] = len
-					idx+=1
-					symbol -= 1
-				end
+	#== DEFLATE Decompression
+	#Implements decompression of a RFC-1951[ftp://ftp.rfc-editor.org/in-notes/rfc1951.txt] compatible stream.
+	class Inflate < ZStream
+		class HuffmanTree
+			attr_accessor :count, :symbol
+			def initialize
+				@count = []
+				@symbol = []
 			end
 		end
 
-		err = construct_tree dynamic_length_codes, lengths, nlen-1
-		
-		if err < 0 || (err > 0 && (nlen - dynamic_length_codes.count[0] != 1)) then raise Zlib::DataError.new("invalid literal/length code lengths") end
-		
-		nlen.times { lengths.delete_at 0 } #We do this since we don't have pointer arithmetic in ruby
-		
-		err = construct_tree dynamic_distance_codes, lengths, ndist-1
-		if err < 0 || (err > 0 && (ndist - dynamic_distance_codes.count[0] != 1)) then raise Zlib::DataError.new("invalid distance code lengths") end
-			
-		codes dynamic_length_codes, dynamic_distance_codes
-	end
+		def initialize window_bits=MAX_WBITS
+			@w_bits = window_bits	
+			if @w_bits < 0 then 
+				@rawdeflate = true
+				@w_bits *= -1 
+			end	
+			super()
+			@zstring = ""
+		end
 	
-	def generate_huffmans		
-		lengths = [] # [8] * 144 + [9] * 112 + [7] * 24 + [8] * 8
+		#Appends data to the input stream
+		def <<(string)
+			@zstring << string
+			inflate
+		end
+	
+		#Sets the inflate dictionary
+		def set_dictionary string
+			@dict = string
+			reset
+		end
 		
-		#literal/length table
-		for idx in (000..143)
-			lengths[idx] = 8
+		#==Example
+		# f = File.open "example.z"
+		# i = Inflate.new
+		# i.inflate f.read
+		def inflate zstring=nil
+			@zstring = zstring unless zstring.nil?
+			#We can't use unpack, IronRuby doesn't have it yet.
+			@zstring.each_byte {|b| @input_buffer << b}
+		
+		 	unless @rawdeflate then
+				compression_method_and_flags = @input_buffer[@in_pos+=1]
+				flags = @input_buffer[@in_pos+=1]
+		
+				# CMF and FLG, when viewed as a 16-bit unsigned integer stored in
+				# MSB order (CMF*256 + FLG), is a multiple of 31
+				if ((compression_method_and_flags << 0x08) + flags) % 31 != 0
+					raise Zlib::DataError.new("incorrect header check")
+				end
+		
+				# CM = 8 denotes the deflate compression method with a window size
+				# up to 32K. (RFC's only specify CM 8)
+				compression_method = compression_method_and_flags & 0x0F 
+		
+				if compression_method != Z_DEFLATED
+					raise Zlib::DataError, "unknown compression method"
+				end
+		
+				# For CM = 8, CINFO is the base-2 logarithm of the LZ77 window size,
+				# minus eight (CINFO = 7 indicates a 32K window size)
+				compression_info = compression_method_and_flags >> 0x04 
+		
+				if (compression_info + 8) > @w_bits
+					raise Zlib::DataError, "invalid window size"
+				end
+		
+				preset_dictionary_flag = ((flags & 0x20) >> 0x05) == 1
+				compression_level = (flags & 0xC0) >> 0x06
+		
+				if preset_dictionary_flag and @dict.nil?
+					raise Zlib::NeedDict, "Preset dictionary needed!"
+				end
+		
+				#TODO:  Add Preset dictionary support
+				if preset_dictionary_flag
+					@dict_crc = @input_buffer[@in_pos+=1] << 24 |
+											@input_buffer[@in_pos+=1] << 16 |
+											@input_buffer[@in_pos+=1] << 8 |
+											@input_buffer[@in_pos+=1]
+				end
+			end
+			last_block = false
+			#Begin processing DEFLATE stream
+			until last_block
+				last_block = (get_bits(1) == 1)
+				block_type = get_bits(2)
+				case block_type
+					when 0 then no_compression
+					when 1 then fixed_codes
+					when 2 then dynamic_codes
+	 				when 3 then raise Zlib::DataError, "invalid block type"
+				end	
+			end
+			finish
 		end
-		for idx in (144..255) 
-			lengths[idx] = 9
+	
+		#Finishes inflating and flushes the buffer
+		def finish
+			output = ""
+			inflate unless @output_buffer.length > 0
+			@output_buffer.each {|c| output << c } 
+			super
+			output
 		end
-		for idx in (256..279)
-			lengths[idx] = 7
+	
+		private
+
+		def no_compression
+			@bit_bucket = 0
+			@bit_count = 0
+			if @in_pos + 4 > @input_buffer.length then raise Zlib::DataError.new("not enough input to read length code") end
+			length = @input_buffer[@in_pos+=1] | (@input_buffer[@in_pos+=1] << 8)
+			
+			if (~length & 0xff != @input_buffer[@in_pos+=1]) || (((~length >> 8) & 0xff) != @input_buffer[@in_pos+=1]) then raise Zlib::DataError.new("invalid stored block lengths") end
+		
+			if @in_pos + length > @input_buffer.length then raise Zlib::DataError.new("ran out of input") end
+				
+		
+			length.times do
+				@output_buffer[@out_pos += 1] = @input_buffer[@in_pos += 1]
+			end
 		end
-		for idx in (280..287)
-			lengths[idx] = 8
+	
+		def fixed_codes
+			if @fixed_length_codes.nil? && @fixed_distance_codes.nil? then generate_huffmans end 
+			codes @fixed_length_codes, @fixed_distance_codes	
 		end
+	
+		def dynamic_codes		
+			order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+			nlen = get_bits(5) + 257
+			ndist = get_bits(5) + 1
+			ncode = get_bits(4) + 4
+				
+			lengths=[]
+			dynamic_length_codes = Zlib::Inflate::HuffmanTree.new
+			dynamic_distance_codes = Zlib::Inflate::HuffmanTree.new
+		
+			if (nlen > MAXLCODES || ndist > MAXDCODES) then raise Zlib::DataError.new("too many length or distance codes") end
+			idx = 0
+		
+			while idx < ncode
+				lengths[order[idx]] = get_bits(3)
+				idx += 1
+			end
+			while idx < 19
+				lengths[order[idx]] = 0
+				idx += 1
+			end
+			err = construct_tree dynamic_length_codes, lengths, 18
+			if err != 0 then raise Zlib::DataError.new("code lengths codes incomplete") end
+		
+			idx = 0
+			while idx < (nlen + ndist)
+				symbol = decode(dynamic_length_codes)
+				if symbol < 16 then 
+					lengths[idx] = symbol 
+					idx  += 1;
+				else
+					len = 0
+						if symbol == 16 then 
+							if idx == 0 then raise Zlib::DataError.new("repeat lengths with no first length") end
+							len = lengths[idx - 1]
+							symbol = 3 + get_bits(2)
+						elsif symbol == 17 then
+							symbol = 3 + get_bits(3)
+						elsif symbol == 18 then 
+							symbol = 11 + get_bits(7)
+						else
+							raise Zlib::DataError.new("invalid repeat length code")
+						end
+					if (idx + symbol) > (nlen + ndist) then raise Zlib::DataError.new("repeat more than specified lengths") end
+					until symbol == 0
+						lengths[idx] = len
+						idx+=1
+						symbol -= 1
+					end
+				end
+			end
+
+			err = construct_tree dynamic_length_codes, lengths, nlen-1
+		
+			if err < 0 || (err > 0 && (nlen - dynamic_length_codes.count[0] != 1)) then raise Zlib::DataError.new("invalid literal/length code lengths") end
+		
+			nlen.times { lengths.delete_at 0 } #We do this since we don't have pointer arithmetic in ruby
+		
+			err = construct_tree dynamic_distance_codes, lengths, ndist-1
+			if err < 0 || (err > 0 && (ndist - dynamic_distance_codes.count[0] != 1)) then raise Zlib::DataError.new("invalid distance code lengths") end
+			
+			codes dynamic_length_codes, dynamic_distance_codes
+		end
+	
+		def generate_huffmans		
+			#literal/length table
+			lengths = [8] * 144 + [9] * 112 + [7] * 24 + [8] * 8
 			@fixed_length_codes = Zlib::Inflate::HuffmanTree.new
 			construct_tree @fixed_length_codes, lengths, 287
 		
-		for idx in (00..29)
-			lengths[idx] = 5
-		end
+			lengths = [5] * 30
 			@fixed_distance_codes = Zlib::Inflate::HuffmanTree.new
-			construct_tree @fixed_distance_codes, lengths, 29
-		
-	end
-	
-	def codes length_codes, distance_codes
-	lens = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
-	lext = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
-	dists = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
-	dext = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
-	
-	symbol = 0
-	
-	until symbol == 256
-		symbol = decode(length_codes)
-		if symbol < 0 then return symbol end
-		if symbol < 256 then @output_buffer[@out_pos+=1] = symbol end
-		if symbol > 256 then
-			symbol -= 257
-			if symbol >= 29 then raise Zlib::DataError.new("invalid literal/length or distance code in fixed or dynamic block") end
-			len = lens[symbol] + get_bits(lext[symbol])
-			symbol = decode(distance_codes)
-			if symbol < 0 then return symbol end
-			dist = dists[symbol] + get_bits(dext[symbol])
-			if dist > @output_buffer.length then raise Zlib::DataError.new("distance is too far back in fixed or dynamic block") end
-			while len > 0
-				@output_buffer[@out_pos+=1] = @output_buffer[@out_pos - dist]
-				len -= 1
-			end
-	end
-	end
-	return 0
-	end
-	
-	def decode huffman_tree
-		code = 0
-		first = 0
-		index = 0 
-		for len in (1..15)
-			code |= get_bits(1)
-			count = huffman_tree.count[len]
-			if code < (first + count) then
-				return huffman_tree.symbol[index + (code - first)]
-			end
-			index += count
-			first += count
-			first <<= 1
-			code <<= 1
+			construct_tree @fixed_distance_codes, lengths, 29		
 		end
-		-9
-	end
 	
-	def construct_tree huffman_tree, lengths, n_symbols
-		offs = []
+		def codes length_codes, distance_codes
+			lens = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+			lext = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+			dists = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+			dext = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
 	
-		for len in (000..MAXBITS)
-			huffman_tree.count[len] = 0
-		end
-
-		for symbol in (000..n_symbols)
-			huffman_tree.count[lengths[symbol]] += 1
-		end
-		
-		if huffman_tree.count[0] == n_symbols then return 0 end
-		
-		left = 1
-		for len in (1..MAXBITS)
-			left <<= 1
-			left -= huffman_tree.count[len];
-			if left < 0 then return left end
-		end
-		
-		offs[1] = 0
-		
-		for len in (1..(MAXBITS-1))
-			offs[len+1] = offs[len] + huffman_tree.count[len]
-		end
-		
-		for symbol in (0..n_symbols)
-			if lengths[symbol] != 0 then 
-				huffman_tree.symbol[offs[lengths[symbol]]] = symbol 
-				offs[lengths[symbol]] += 1
+			symbol = 0
+	
+			until symbol == 256
+				symbol = decode(length_codes)
+				if symbol < 0 then return symbol end
+				if symbol < 256 then @output_buffer[@out_pos+=1] = symbol end
+				if symbol > 256 then
+					symbol -= 257
+					if symbol >= 29 then raise Zlib::DataError.new("invalid literal/length or distance code in fixed or dynamic block") end
+					len = lens[symbol] + get_bits(lext[symbol])
+					symbol = decode(distance_codes)
+					if symbol < 0 then return symbol end
+					dist = dists[symbol] + get_bits(dext[symbol])
+					if dist > @output_buffer.length then raise Zlib::DataError.new("distance is too far back in fixed or dynamic block") end
+					while len > 0
+						@output_buffer[@out_pos+=1] = @output_buffer[@out_pos - dist]
+						len -= 1
+					end
 				end
-			
+			end
+			return 0
 		end
-	left
-	end
 
-class HuffmanTree
-	attr_accessor :count, :symbol
-	def initialize
-		@count = []
-		@symbol = []
-	end
-end
+		def decode huffman_tree
+			code = 0
+			first = 0
+			index = 0 
+			for len in (1..15)
+				b = get_bits(1)
+				code |= b
+				count = huffman_tree.count[len]
+				if code < first + count
+					return huffman_tree.symbol[index + (code - first)]
+				end
+				index += count
+				first += count
+				first <<= 1
+				code <<= 1
+			end
+			-9
+		end
+	
+		def construct_tree huffman_tree, lengths, n_symbols
+			offs = []
+	
+			for len in (000..MAXBITS)
+				huffman_tree.count[len] = 0
+			end
 
-	class << self
-		def inflate zstring
-			d = self.new
-			d.inflate zstring
+			for symbol in (000..n_symbols)
+				huffman_tree.count[lengths[symbol]] += 1
+			end
+		
+			return 0 if huffman_tree.count[0] == n_symbols
+		
+			left = 1
+			for len in (1..MAXBITS)
+				left <<= 1
+				left -= huffman_tree.count[len]
+				return left if left < 0
+			end
+		
+			offs[1] = 0
+		
+			for len in (1..(MAXBITS-1))
+				offs[len+1] = offs[len] + huffman_tree.count[len]
+			end
+		
+			for symbol in (0..n_symbols)
+				if lengths[symbol] != 0
+					huffman_tree.symbol[offs[lengths[symbol]]] = symbol 
+					offs[lengths[symbol]] += 1
+				end			
+			end
+
+			left
+		end
+
+		class << self
+			def inflate zstring
+				d = self.new
+				d.inflate zstring
+			end
 		end
 	end
-
-end
 end
 
