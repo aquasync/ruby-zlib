@@ -1,5 +1,9 @@
 #require File.dirname(__FILE__) + '/../../spec_helper'
-require '../lib/zliby'
+require './lib/zlib.rb'
+
+# these specs should be re-written to rely on working inflate functionality. unlike
+# inflate, there are many possible valid outputs from compression.
+# that way these specs can be tested on CZlib as well
 
 describe 'Zlib::Deflate#deflate' do
 
@@ -13,7 +17,8 @@ describe 'Zlib::Deflate#deflate' do
     zipped = @deflator.deflate data, Zlib::FINISH
     @deflator.finish
 
-    zipped.should == "x\234c`\200\001\000\000\n\000\001"
+    #zipped.should == "x\234c\200\003\000\000\n\000\001"
+    CZlib::Inflate.inflate(zipped).should == data
   end
 
 #  it 'deflates lots of data' do
@@ -34,7 +39,8 @@ describe 'Zlib::Deflate::deflate' do
 
     zipped = Zlib::Deflate.deflate data
 
-    zipped.should == "x\234c`\200\001\000\000\n\000\001"
+    #zipped.should == "x\234c\200\003\000\000\n\000\001"
+    CZlib::Inflate.inflate(zipped).should == data
   end
 
 #  it 'deflates lots of data' do

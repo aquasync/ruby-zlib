@@ -1,5 +1,5 @@
 #require File.dirname(__FILE__) + '/../../spec_helper'
-require '../lib/zliby'
+require './lib/zlib.rb'
 
 describe 'Zlib::Deflate#params' do
  # ruby_bug '293', '1.9.0' do
@@ -7,7 +7,7 @@ describe 'Zlib::Deflate#params' do
     data = 'abcdefghijklm'
 
     d = Zlib::Deflate.new Zlib::NO_COMPRESSION, Zlib::MAX_WBITS,
-    Zlib::DEF_MEM_LEVEL, Zlib::DEFAULT_STRATEGY
+    	Zlib::DEF_MEM_LEVEL, Zlib::DEFAULT_STRATEGY
 
     d << data.slice!(0..10)
     d.params Zlib::BEST_COMPRESSION, Zlib::DEFAULT_STRATEGY
