@@ -16,7 +16,6 @@ module Zlib
 		HASHMAX    = 2039		# one more than max hash value
 		MAXMATCH   = 32		  # how many matches we track
 		HASHCHARS  = 3		  # how many chars make a hash
-		MAXCODELEN = 16
 
 		CodeRecord = Struct.new(:code, :extra_bits, :range)
 
@@ -38,24 +37,215 @@ module Zlib
 			CodeRecord.new i, [i / 2 - 1, 0].max, l1...l2
 		end
 
-		# not quite sure of the meaning of these yet...
-		SYMLIMIT              = 65536
-		SYMPFX_LITLEN         = 0x00000000
-		SYMPFX_DIST           = 0x40000000
-		SYMPFX_EXTRABITS      = 0x80000000
-		SYMPFX_CODELEN        = 0xC0000000
-		SYMPFX_MASK           = 0xC0000000
-		SYM_EXTRABITS_MASK    = 0x3C000000
-		SYM_EXTRABITS_SHIFT   = 26
+		SYM_LIMIT             = 65536
+		SYM_LITLEN            = 0x00000000
+		SYM_DIST              = 0x40000000
+		SYM_EXTRA_BITS        = 0x80000000
+		SYM_CODE_LEN          = 0xC0000000
+		SYM_MASK              = 0xC0000000
+		SYM_EXTRA_BITS_MASK   = 0x3C000000
+		SYM_EXTRA_BITS_SHIFT  = 26
 
-		class HuffmanTree
-			attr_reader :codes, :lengths
-			def initialize
-				@codes = []
-				@lengths = []
+		# Binary heap used by HuffmanTree.lengths_from_freqs
+		#
+		# Structured as an array of ints, with two ints per node
+		# (user data and key pair).
+		class BinaryHeap < Array
+			def push userdata, key
+				me = length
+				super userdata, key
+				while me > 0
+					c = (me - 2) / 4 * 2 # parent
+					break unless self[me + 1] < self[c + 1]
+					self[me], self[c] = self[c], self[me]
+					self[me + 1], self[c + 1] = self[c + 1], self[me + 1]
+					me = c
+				end
+			end
+
+			def shift
+				len = length - 2
+				pair = self[0], self[1]
+				if len == 0
+					clear
+				else
+					self[1] = pop
+					self[0] = pop
+				end
+				me = 0
+				loop do
+					lc = me * 2 + 2 # left
+					rc = me * 2 + 4 # right
+					break if lc >= len
+					c = rc >= len || self[lc + 1] < self[rc + 1] ? lc : rc
+					break unless self[me + 1] > self[c + 1]
+					self[me], self[c] = self[c], self[me]
+					self[me + 1], self[c + 1] = self[c + 1], self[me + 1]
+					me = c
+				end
+				pair
 			end
 		end
-		
+
+		class HuffmanTree
+			HUFF_MAX = 286
+			MAX_CODE_LEN = 16
+
+			attr_reader :codes, :lengths, :freqs
+
+			def initialize params={}
+				if freqs = params[:freqs]
+					lengths = self.class.lengths_from_freqs_limited freqs.dup, params[:limit] || 15
+				end
+				if lengths ||= params[:lengths]
+					codes = self.class.codes_from_lengths(lengths).last
+				end
+				unless codes ||= params[:codes]
+					raise ArgumentError, 'must specify either :freqs, :lengths, or :codes'
+				end
+				@codes = codes
+				@lengths = lengths
+				@freqs = freqs
+			end
+
+			def self.codes_from_lengths lengths
+				codes = [nil] * lengths.length
+				count = [0] * MAX_CODE_LEN
+				start_code = count.dup
+
+				# Count the codes of each length.
+				lengths.each { |l| count[l] += 1 }
+				max_len = lengths.max
+
+				# Determine the starting code for each length block.
+				code = 0
+				(1...MAX_CODE_LEN).each do |i|
+					start_code[i] = code
+					code += count[i]
+					# overcommitted
+					max_len = -1 if code > (1 << i)
+					code <<= 1
+				end
+				# undercommitted
+				max_len = -2 if code < (1 << MAX_CODE_LEN)
+
+				# Determine the code for each symbol. Mirrored, of course.
+				lengths.length.times do |i|
+					code = start_code[lengths[i]]
+					start_code[lengths[i]] += 1
+					codes[i] = 0
+					lengths[i].times do |j|
+						codes[i] = (codes[i] << 1) | (code & 1)
+						code >>= 1
+					end
+				end
+
+				[max_len, codes]
+			end
+
+			# The core of the Huffman algorithm: takes an input array of
+			# symbol frequencies, and produces an output array of code
+			# lengths.
+			#
+			# This is basically a generic Huffman implementation, but it has
+			# one zlib-related quirk which is that it caps the output code
+			# lengths to fit in an unsigned char (which is safe since Deflate
+			# will reject anything longer than 15 anyway). Anyone wanting to
+			# rip it out and use it in another context should find that easy
+			# to remove.
+			def self.lengths_from_freqs freqs
+				nsyms  = freqs.length
+				parent = [0] * (2 * HUFF_MAX - 1)
+				length = [0] * (2 * HUFF_MAX - 1)
+				heap   = BinaryHeap.new
+
+				# Begin by building the heap, leaving out unused symbols entirely
+				nsyms.times { |i| heap.push i, freqs[i] if freqs[i] > 0 }
+
+				# Now repeatedly take two elements off the heap and merge them.
+				n = HUFF_MAX
+				while heap.length > 2
+					i, si = heap.shift
+					j, sj = heap.shift
+					parent[i] = parent[j] = n
+					heap.push n, si + sj
+					n += 1
+				end
+
+				# Now we have our tree, in the form of a link from each node
+				# to the index of its parent. Count back down the tree to
+				# determine the code lengths.
+
+				# The tree root has length 0 after that, which is correct.
+				(n - 1).downto(0) do |i|
+					length[i] = 1 + length[parent[i]] if parent[i] > 0
+				end
+
+				# And that's it. (Simple, wasn't it?) Copy the lengths into
+				# the output array and leave.
+				# 
+				# Here we cap lengths to fit in unsigned char.
+				(0...nsyms).map { |i| [length[i], 255].min }
+			end
+
+			# Wrapper around lengths_from_freqs which enforces the Deflate
+			# restriction that no code length may exceed 15 bits, or 7 for the
+			# auxiliary length alphabet. This function has the same calling
+			# semantics as lengths_from_freqs, except that it might modify the
+			# freqs array.
+			def self.lengths_from_freqs_limited(freqs, limit)
+				# Nasty special case: if the frequency table has fewer than
+				# two non-zero elements, we must invent some, because we can't
+				# have fewer than one bit encoding a symbol.
+				# Is this even possible? maybe for an empty block, where all you
+				# encode is the EOB marker.
+				count = freqs.inject(0) { |a, b| b > 0 ? a + 1 : a }
+				count.times { freqs[freqs.index(0)] = 1 } if count < 2
+
+				# First, try building the Huffman table the normal way. If
+				# this works, it's optimal, so we don't want to mess with it.
+				lengths = lengths_from_freqs(freqs)
+				return lengths if lengths.all? { |l| l <= limit } # OK
+
+				# FIXME ... (Massive comment elided at this point) ...
+
+				maxprob = limit == 15 ? 2584 : 55
+				temp = freqs.reject { |freq| freq == 0 }
+				nactivesyms = temp.length
+				smallestfreq = temp.min
+				totalfreq = temp.inject { |a, b| a + b }
+
+				# We want to find the smallest integer `adjust' such that
+				# (totalfreq + nactivesyms * adjust) / (smallestfreq +
+				# adjust) is less than maxprob. A bit of algebra tells us
+				# that the threshold value is equal to
+				#
+				#   totalfreq - maxprob * smallestfreq
+				#   ----------------------------------
+				#          maxprob - nactivesyms
+				#
+				# rounded up, of course. And we'll only even be trying
+				# this if
+				num = totalfreq - smallestfreq * maxprob
+				denom = maxprob - nactivesyms
+				adjust = (num + denom - 1) / denom
+
+				# Now add `adjust' to all the input symbol frequencies and rebuild
+				# trees.
+				freqs.map! { |freq| freq == 0 ? 0 : freq + adjust }
+				lengths_from_freqs(freqs)
+			end
+
+			def self.static_literal_length
+				@static_literal_lengths ||=
+					new(:lengths => [8] * 144 + [9] * 112 + [7] * 24 + [8] * 8)
+			end
+			
+			def self.static_distance
+				@static_distance ||= new(:lengths => [5] * 30)
+			end
+		end
+
 		def self.deflate data, level=DEFAULT_COMPRESSION
 			new(level).deflate data, FINISH
 		end
@@ -64,11 +254,10 @@ module Zlib
 		def initialize level=DEFAULT_COMPRESSION, windowBits=MAX_WBITS, memlevel=nil, strategy=DEFAULT_STRATEGY
 			@zstring = ''
 			@header = false
+			@output = BitWriter.new StringIO.new
 
 			# LZ77 stuff
-			# -----
-
-			# this is fairly memory consuming. 
+			# this seems a bit wasteful
 			@win = (0...WINSIZE).map { WindowEntry.new INVALID, INVALID, INVALID }
 			@hashtab = (0...HASHMAX).map { HashEntry.new INVALID }
 			@winpos = 0
@@ -77,38 +266,9 @@ module Zlib
 			@data = 0.chr * WINSIZE
 
 			# DEFLATE stuff
-			# -----
-
 			@nsyms = 0
-			@syms = [nil] * SYMLIMIT
+			@syms = [nil] * SYM_LIMIT
 			@symstart = 0
-
-			# Huffman stuff
-			# -----
-
-			lengths = [8] * 144 + [9] * 112 + [7] * 24 + [8] * 8
-			maxlen, codes = hufcodes lengths
-
-#			codes.zip(lengths).each_with_index do |(code, length), i|
-#				p i => [code].pack('N').unpack('B*')[0].reverse.match(/(#{'.' * length})(.*)/)[1..-1].join('|')
-#			end
-
-			@static_litlen = HuffmanTree.new
-			@static_litlen.codes.replace codes
-			@static_litlen.lengths.replace lengths
-
-			lengths = [5] * 30
-			maxlen, codes = hufcodes lengths
-
-#			codes.zip(lengths).each_with_index do |(code, length), i|
-#				p i => [code].pack('N').unpack('B*')[0].reverse.match(/(#{'.' * length})(.*)/)[1..-1].join('|')
-#			end
-
-			@static_dist = HuffmanTree.new
-			@static_dist.codes.replace codes
-			@static_dist.lengths.replace lengths
-			
-			@output = BitWriter.new StringIO.new
 		end
 		
 		def output
@@ -138,11 +298,11 @@ module Zlib
 		def lz77_advance c, hash
 			# Remove the hash entry at winpos from the tail of its chain,
 			# or empty the chain if it's the only thing on the chain.
-#			if @win[@winpos].prev != INVALID
-#				@win[@win[@winpos].prev].next = INVALID
-#			elsif @win[@winpos].hashval != INVALID
-#				@hashtab[@win[@winpos].hashval].first = INVALID
-#			end
+			if @win[@winpos].prev != INVALID
+				@win[@win[@winpos].prev].next = INVALID
+			elsif @win[@winpos].hashval != INVALID
+				@hashtab[@win[@winpos].hashval].first = INVALID
+			end
 
 			# Create a new entry at winpos and add it to the head of its
 			# hash chain.
@@ -268,20 +428,20 @@ module Zlib
 					end
 				end
 
-			# Now advance the position by `advance' characters,
-			# keeping the window and hash chains consistent.
-			while advance > 0
-				if len >= HASHCHARS
-					lz77_advance data[0], lz77_hash(data)
-				else
-					@pending[@npending] = data[0]
-					@npending += 1
+				# Now advance the position by `advance' characters,
+				# keeping the window and hash chains consistent.
+				while advance > 0
+					if len >= HASHCHARS
+						lz77_advance data[0], lz77_hash(data)
+					else
+						@pending[@npending] = data[0]
+						@npending += 1
+					end
+					# no pointers. this may be very inefficient, but don't care for now
+					data.slice! 0, 1
+					len     -= 1
+					advance -= 1
 				end
-				# no pointers. this may be very inefficient, but don't care for now
-				data.slice! 0, 1
-				len     -= 1
-				advance -= 1
-			end
 			end
 		end
 
@@ -351,44 +511,9 @@ module Zlib
 				raise ArgumentError, 'bad flush value - %p' % flush
 			end
 		end
-
-		def hufcodes lengths
-			codes = [nil] * lengths.length
-			count = [0] * MAXCODELEN
-			startcode = count.dup
-
-		  # Count the codes of each length.
-			lengths.each { |l| count[l] += 1 }
-			maxlen = lengths.max
-
-			# Determine the starting code for each length block.
-			code = 0
-			(1...MAXCODELEN).each do |i|
-				startcode[i] = code
-				code += count[i]
-				# overcommitted
-				maxlen = -1 if code > (1 << i)
-				code <<= 1
-			end
-			# undercommitted
-			maxlen = -2 if code < (1 << MAXCODELEN)
-
-		  # Determine the code for each symbol. Mirrored, of course.
-		  lengths.length.times do |i|
-				code = startcode[lengths[i]]
-				startcode[lengths[i]] += 1
-				codes[i] = 0
-				lengths[i].times do |j|
-					codes[i] = (codes[i] << 1) | (code & 1)
-					code >>= 1
-				end
-		  end
-
-			[maxlen, codes]
-		end
 		
 		def literal c
-			outsym SYMPFX_LITLEN | c
+			outsym SYM_LITLEN | c
 		end
 
 		def match distance, len
@@ -410,12 +535,12 @@ module Zlib
 				code = LEN_CODES.find { |c| c.range === thislen }
 
 				# Transmit the length code.
-				outsym SYMPFX_LITLEN | code.code
+				outsym SYM_LITLEN | code.code
 		
 				# Transmit the extra bits.
 				if code.extra_bits > 0
-					outsym SYMPFX_EXTRABITS | (thislen - code.range.begin) |
-						(code.extra_bits << SYM_EXTRABITS_SHIFT)
+					outsym SYM_EXTRA_BITS | (thislen - code.range.begin) |
+						(code.extra_bits << SYM_EXTRA_BITS_SHIFT)
 				end
 		
 				# Binary-search to find which distance code we're
@@ -424,12 +549,12 @@ module Zlib
 				code = DIST_CODES.find { |c| c.range === distance }
 		
 				# Write the distance code.
-				outsym SYMPFX_DIST | code.code
+				outsym SYM_DIST | code.code
 		
 				# Transmit the extra bits.
 				if code.extra_bits > 0
-					outsym SYMPFX_EXTRABITS | (distance - code.range.begin) |
-						(code.extra_bits << SYM_EXTRABITS_SHIFT)
+					outsym SYM_EXTRA_BITS | (distance - code.range.begin) |
+						(code.extra_bits << SYM_EXTRA_BITS_SHIFT)
 				end
 			end
 		end
@@ -444,48 +569,205 @@ module Zlib
 
 		# Write out a single symbol, given the three Huffman trees.
 		def writesym sym, huftrees
-			basesym = sym &~ SYMPFX_MASK
+			basesym = sym & ~SYM_MASK
 			litlen, dist, codelen = huftrees
 		
-			case sym & SYMPFX_MASK
-			when SYMPFX_LITLEN
-#				p :litlen => basesym
+			case sym & SYM_MASK
+			when SYM_LITLEN
 				outbits litlen.codes[basesym], litlen.lengths[basesym]
-		  when SYMPFX_DIST
-#				p :dist => basesym
+		  when SYM_DIST
 				outbits dist.codes[basesym], dist.lengths[basesym]
-		  when SYMPFX_CODELEN
-#				p :codelen => basesym
+		  when SYM_CODE_LEN
 				outbits codelen.codes[basesym], codelen.lengths[basesym]
-		  when SYMPFX_EXTRABITS
-				i = basesym >> SYM_EXTRABITS_SHIFT
-				basesym &= ~SYM_EXTRABITS_MASK
-#				p :extrabits => [basesym, i]
-				outbits basesym, i
+		  when SYM_EXTRA_BITS
+				outbits basesym & ~SYM_EXTRA_BITS_MASK, basesym >> SYM_EXTRA_BITS_SHIFT
 			end
 		end
 
 		def outsym sym
-			@syms[(@symstart + @nsyms) % SYMLIMIT] = sym
+			@syms[(@symstart + @nsyms) % SYM_LIMIT] = sym
 			@nsyms += 1
-			chooseblock if @nsyms == SYMLIMIT
+			chooseblock if @nsyms == SYM_LIMIT
+		end
+
+		def symsize sym, huftrees
+			basesym = sym & ~SYM_MASK
+			litlen, dist, codelen = huftrees
+
+			case sym & SYM_MASK
+			when SYM_LITLEN
+				litlen.lengths[basesym]
+		  when SYM_DIST
+				dist.lengths[basesym]
+		  when SYM_CODE_LEN
+				codelen.lengths[basesym]
+		  when SYM_EXTRA_BITS
+				basesym >> SYM_EXTRA_BITS_SHIFT
+			end
 		end
 
 		# outblock() must output _either_ a dynamic block of length
 		# `dynamic_len', _or_ a static block of length `static_len', but
 		# it gets to choose which.
 		def outblock dynamic_len, static_len
-			#p :outblock => [dynamic_len, static_len]
-			#p @syms[0, static_len]
+			# We make our choice of block to output by doing all the
+			# detailed work to determine the exact length of each possible
+			# block. Then we choose the one which has fewest output bits
+			# per symbol.
 
-			# ...
+			# First build the two main Huffman trees for the dynamic
+			# block.
+
+			# Count up the frequency tables.
+			freqs1 = [0] * 286
+			freqs2 = [0] * 30
+			freqs1[256] = 1 	       # we're bound to need one EOB
+
+			dynamic_len.times do |i|
+				sym = @syms[(@symstart + i) % SYM_LIMIT]
+
+				# Increment the occurrence counter for this symbol, if
+				# it's in one of the Huffman alphabets and isn't extra
+				# bits.
+				if (sym & SYM_MASK) == SYM_LITLEN
+					sym &= ~SYM_MASK;
+					freqs1[sym] += 1
+				elsif (sym & SYM_MASK) == SYM_DIST
+					sym &= ~SYM_MASK
+					freqs2[sym] += 1
+				end
+			end
+
+			litlen = HuffmanTree.new :freqs => freqs1
+			dist = HuffmanTree.new :freqs => freqs2
+
+			# Determine HLIT and HDIST.
+			hlit = 286
+			hlit -= 1 while hlit > 257 and litlen.lengths[hlit - 1] == 0
+			hdist = 30
+			hdist -= 1 while hdist > 1 and dist.lengths[hdist - 1] == 0
+
+			# Write out the list of symbols used to transmit the
+			# trees.
+			treesrc = []
+			hlit.times { |i|  treesrc << litlen.lengths[i] }
+			hdist.times { |i| treesrc << dist.lengths[i] }
+
+			treesyms = []
+			i = 0
+			while i < treesrc.length
+				# Find length of run of the same length code.	
+				j = 1
+				j += 1 while treesrc[i + j] == treesrc[i]
+
+				# Encode that run as economically as we can.
+				k = j
+				if treesrc[i] == 0
+					# Zero code length: we can output run codes for
+					# 3-138 zeroes. So if we have fewer than 3 zeroes,
+					# we just output literals. Otherwise, we output
+					# nothing but run codes, and tweak their lengths
+					# to make sure we aren't left with under 3 at the
+					# end.
+					if k < 3
+						k.times { treesyms.push 0 | SYM_CODE_LEN }
+					else
+						while k > 0
+							rpt = k > 140 ? 138 : k <= 138 ? k : k - 3
+							if rpt < 11
+								treesyms.push 17 | SYM_CODE_LEN;
+								treesyms.push SYM_EXTRA_BITS | (rpt - 3) |
+								 	(3 << SYM_EXTRA_BITS_SHIFT)
+							else
+								treesyms.push 18 | SYM_CODE_LEN;
+								treesyms.push SYM_EXTRA_BITS | (rpt - 11) |
+									(7 << SYM_EXTRA_BITS_SHIFT)
+							end
+							k -= rpt
+						end
+					end
+				else
+					# Non-zero code length: we must output the first
+					# one explicitly, then we can output a copy code
+					# for 3-6 repeats. So if we have fewer than 4
+					# repeats, we _just_ output literals. Otherwise,
+					# we output one literal plus at least one copy
+					# code, and tweak the copy codes to make sure we
+					# aren't left with under 3 at the end.
+					treesyms.push treesrc[i] | SYM_CODE_LEN
+					k -= 1
+					if k < 3
+						k.times { treesyms.push treesrc[i] | SYM_CODE_LEN }
+					else
+						while k > 0
+							rpt = [k, 6].min
+							rpt = k - 3 if (rpt > k - 3 && rpt < k)
+							treesyms.push 16 | SYM_CODE_LEN;
+							treesyms.push SYM_EXTRA_BITS | (rpt - 3) |
+								(2 << SYM_EXTRA_BITS_SHIFT)
+							k -= rpt
+						end
+					end
+				end
+
+				i += j
+			end
+
+			# Count up the frequency table for the tree-transmission
+			# symbols, and build the auxiliary Huffman tree for that.
+			freqs3 = [0] * 19
+			treesyms.each do |sym|
+				# Increment the occurrence counter for this symbol, if
+				# it's the Huffman alphabet and isn't extra bits.
+				freqs3[sym & ~SYM_MASK] += 1 if (sym & SYM_MASK) == SYM_CODE_LEN
+			end
+
+			codelen = HuffmanTree.new :freqs => freqs3, :limit => 7
+
+			lenlenmap = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+
+			# Reorder the code length codes into transmission order, and
+			# determine HCLEN.
+			trans = (0...19).map { |i| codelen.lengths[lenlenmap[i]] }
+			hclen = 19
+			hclen -= 1 while hclen > 4 and trans[hclen - 1] == 0
+
+			# Now work out the exact size of both the dynamic and the
+			# static block, in bits.
+
+			dht = [litlen, dist, codelen]
+			sht = [HuffmanTree.static_literal_length, HuffmanTree.static_distance, nil]
+
+			# First the dynamic block.
+			dsize = 3 + 5 + 5 + 4	    # 3-bit header, HLIT, HDIST, HCLEN
+			dsize += 3 * hclen	      # code-length-alphabet code lengths
+			# Code lengths
+			treesyms.each { |sym| dsize += symsize(sym, dht) }
+			# The actual block data
+			dynamic_len.times do |i|
+				sym = @syms[(@symstart + i) % SYM_LIMIT]
+				dsize += symsize(sym, dht)
+			end
+			# And the end-of-data symbol.
+			dsize += symsize(SYM_LITLEN | 256, dht)
+
+			# Now the static block.
+			ssize = 3		       # 3-bit block header
+			# The actual block data
+			static_len.times do |i|
+				sym = @syms[(@symstart + i) % SYM_LIMIT]
+				ssize += symsize(sym, sht)
+			end
+			# And the end-of-data symbol.
+			ssize += symsize(SYM_LITLEN | 256, sht);
+
+			# Compare the two and decide which to output. We break
+			# exact ties in favour of the static block, because of the
+			# special case in which that block has zero length.
+			dynamic = ssize * dynamic_len > dsize * static_len
+
+			# FIXME
 			@lastblock = true
-			dynamic = false
-			blklen = static_len
-			ht = [@static_litlen, @static_dist, nil]
-			#warn 'dynamic blocks not implemented'
-
-			# Actually transmit the block.
 
 			# 3-bit block header
 			bfinal = @lastblock ? 1 : 0
@@ -493,23 +775,37 @@ module Zlib
 			outbits bfinal, 1
 			outbits btype, 2
 
+			# Actually transmit the block.
+
 			if dynamic
-				# ...
-				raise NotImplementedError
+				# HLIT, HDIST and HCLEN
+				outbits hlit - 257, 5
+				outbits hdist - 1, 5
+				outbits hclen - 4, 4
+
+				# Code lengths for the auxiliary tree
+				hclen.times { |i| outbits trans[i], 3 }
+
+				# Code lengths for the literal/length and distance trees
+				treesyms.each { |sym| writesym sym, dht }
+
+				blklen, ht = dynamic_len, dht
+	   	else
+				blklen, ht = static_len, sht
 			end
 
 			# Output the actual symbols from the buffer
 			blklen.times do |i|
-				sym = @syms[(@symstart + i) % SYMLIMIT]
+				sym = @syms[(@symstart + i) % SYM_LIMIT]
 				writesym sym, ht
 			end
 
 			# Output the end-of-data symbol
-			writesym SYMPFX_LITLEN | 256, ht
+			writesym SYM_LITLEN | 256, ht
 
 			# Remove all the just-output symbols from the symbol buffer by
 			# adjusting symstart and nsyms.
-			@symstart = (@symstart + blklen) % SYMLIMIT
+			@symstart = (@symstart + blklen) % SYM_LIMIT
 			@nsyms -= blklen
 		end
 
@@ -540,9 +836,9 @@ module Zlib
 			len = 300 * 8 # very approximate size of the Huffman trees
 		
 			@nsyms.times do |i|
-				sym = @syms[(@symstart + i) % SYMLIMIT]
+				sym = @syms[(@symstart + i) % SYM_LIMIT]
 		
-				if i > 0 && (sym & SYMPFX_MASK) == SYMPFX_LITLEN
+				if i > 0 && (sym & SYM_MASK) == SYM_LITLEN
 					# This is a viable point at which to end the block.
 					# Compute the value for money.
 					vfm = i * 32768 / len      # symbols encoded per bit
@@ -556,24 +852,24 @@ module Zlib
 				# Increment the occurrence counter for this symbol, if
 				# it's in one of the Huffman alphabets and isn't extra
 				# bits.
-				if (sym & SYMPFX_MASK) == SYMPFX_LITLEN
-					sym &= ~SYMPFX_MASK
+				if (sym & SYM_MASK) == SYM_LITLEN
+					sym &= ~SYM_MASK
 					len += freqs1[sym] * 8 * log2(freqs1[sym])
 					len -= total1 * approxlog2(total1)
 					freqs1[sym] += 1
 					total1 += 1
 					len -= freqs1[sym] * 8 * log2(freqs1[sym])
 					len += total1 * 8 * log2(total1)
-				elsif (sym & SYMPFX_MASK) == SYMPFX_DIST
-					sym &= ~SYMPFX_MASK
+				elsif (sym & SYM_MASK) == SYM_DIST
+					sym &= ~SYM_MASK
 					len += freqs2[sym] * 8 * log2(freqs2[sym])
 					len -= total2 * 8 * log2(total2)
 					freqs2[sym] += 1
 					total2 += 1
 					len -= freqs2[sym] * 8 * log2(freqs2[sym])
 					len += total2 * 8 * log2(total2)
-				elsif (sym & SYMPFX_MASK) == SYMPFX_EXTRABITS
-					len += 8 * ((sym &~ SYMPFX_MASK) >> SYM_EXTRABITS_SHIFT)
+				elsif (sym & SYM_MASK) == SYM_EXTRA_BITS
+					len += 8 * ((sym &~ SYM_MASK) >> SYM_EXTRA_BITS_SHIFT)
 				end
 			end
 		

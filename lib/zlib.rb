@@ -38,6 +38,9 @@ if $0 == __FILE__
 	data = q.output
 	p :deflated => data
 	p CZlib::Inflate.inflate(data)
+	p Zlib::Deflate.deflate(0.chr * 10000, 9).length
+	p CZlib::Deflate.deflate(0.chr * 10000, 9).length
+	p CZlib::Inflate.inflate(Zlib::Deflate.deflate(0.chr * 10000, 9)).length
 end
 
 #789c cbad 4c49 2c49 8490 0020 da05 01
