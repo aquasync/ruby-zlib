@@ -70,13 +70,17 @@ module Zlib
 			0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d
 		]
 
+		def crc_table
+			CRC32_TABLE
+		end
+
 		def crc32 string='', crc=0
 			# this will ensure +crc+ is in appropriate range and throw same error
 			# as standard Zlib.crc32
 			[crc].pack('L')
 			crc = crc ^ 0xffffffff
 			string.each_byte do |byte|
-				crc = (crc >> 8) ^ crc_table[(crc ^ byte) & 0xff]
+				crc = (crc >> 8) ^ CRC32_TABLE[(crc ^ byte) & 0xff]
 			end
 			crc ^ 0xffffffff
 		end
