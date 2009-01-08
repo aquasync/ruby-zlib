@@ -29,6 +29,18 @@ module Zlib
 	PRESET_DICT        = 0x20 # preset dictionary flag in zlib header
 	DEFLATED           = 8
 
+	#Generic Error
+	class Error < Exception
+	end
+
+	#Dictionary Needed
+	class NeedDict < Error
+	end
+
+	#Invalid Data
+	class DataError < Error
+	end
+
 	class ZStream
 		class BitReader # :nodoc:
 			attr_reader :io
