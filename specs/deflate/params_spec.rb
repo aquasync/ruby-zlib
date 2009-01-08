@@ -1,5 +1,4 @@
-#require File.dirname(__FILE__) + '/../../spec_helper'
-require './lib/zlib.rb'
+require File.dirname(__FILE__) + '/../spec_helper'
 
 describe 'Zlib::Deflate#params' do
  # ruby_bug '293', '1.9.0' do

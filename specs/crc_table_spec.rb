@@ -1,5 +1,4 @@
-#require File.dirname(__FILE__) + '/../../spec_helper'
-require '../lib/zlib.rb'
+require File.dirname(__FILE__) + '/spec_helper'
 
 describe "Zlib.crc_table" do
   it "should return the same value as zlib's get_crc_table()" do

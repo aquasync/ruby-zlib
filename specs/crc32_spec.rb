@@ -1,5 +1,4 @@
-#require File.dirname(__FILE__) + '/../../spec_helper'
-require '../lib/zlib.rb'
+require File.dirname(__FILE__) + '/spec_helper'
 
 describe "Zlib.crc32" do
   it "calculates CRC checksum for string" do

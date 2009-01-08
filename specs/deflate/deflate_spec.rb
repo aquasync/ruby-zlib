@@ -1,5 +1,4 @@
-#require File.dirname(__FILE__) + '/../../spec_helper'
-require './lib/zlib.rb'
+require File.dirname(__FILE__) + '/../spec_helper'
 
 # these specs should be re-written to rely on working inflate functionality. unlike
 # inflate, there are many possible valid outputs from compression.

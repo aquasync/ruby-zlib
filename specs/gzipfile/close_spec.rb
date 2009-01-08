@@ -1,6 +1,4 @@
-#require File.dirname(__FILE__) + '/../../spec_helper'
-require '../lib/zlib.rb'
-require 'stringio'
+require File.dirname(__FILE__) + '/../spec_helper'
 
 
 describe 'Zlib::GzipFile#close' do

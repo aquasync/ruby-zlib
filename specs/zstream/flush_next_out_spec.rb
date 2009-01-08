@@ -1,5 +1,4 @@
-#require File.dirname(__FILE__) + '/../../spec_helper'
-require '../lib/zliby'
+require File.dirname(__FILE__) + '/../spec_helper'
 
 describe 'Zlib::ZStream#flush_next_out' do
 
