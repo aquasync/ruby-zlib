@@ -1,16 +1,121 @@
 module Zlib
 	class GzipFile
+		class Error < Exception
+		end
+
 		def initialize
 			@input_buffer = []
 			@output_buffer = []
 			@out_pos = -1
 			@in_pos = -1
+			@closed = false
+
+			@orig_name = nil
+			@comment = nil
 		end
 	
 		def close
+			@closed = true
 		end
-	
-		class Error < Exception
+		
+		def closed?
+			@closed
+		end
+
+		def orig_name
+			raise Error, 'closed gzip stream' if closed?
+			@orig_name
+		end
+
+		def comment
+			raise Error, 'closed gzip stream' if closed?
+			@comment
+		end
+	end
+
+	# TODO: this class cheats a bit and just deflates everything at close time.
+	# should be compressing in an incremental fashion...
+	class GzipWriter < GzipFile
+		def initialize io
+			super()
+			@io = io
+			@header = false
+			@mtime = Time.now # whats zlib's default in this regard...?
+			@data = ''
+		end
+
+		def mtime
+			raise GzipFile::Error, 'closed gzip stream' if closed?
+			@mtime
+		end
+
+		def mtime= time
+			raise GzipFile::Error, 'header is already written' if @header
+			time = Time.at(time) if Numeric === time
+			@mtime = time
+		end
+
+		def comment= comment
+			raise GzipFile::Error, 'header is already written' if @header
+			@comment = comment
+		end
+
+		def orig_name= orig_name
+			raise GzipFile::Error, 'header is already written' if @header
+			@orig_name = orig_name
+		end
+		
+		def close
+			raise GzipFile::Error, 'closed gzip stream' if closed?
+			# ensure header was written
+			write ''
+			# just compress everything now...
+			data = Deflate.deflate(@data)
+			data.slice! 0..1   # remove header
+			data.slice! -4..-1 # remove adler
+			@io << data
+			@io << [Checksum.crc32(@data)].pack('V')
+			@io << [@data.length].pack('V')
+			super
+		end
+		
+		def write data
+			unless @header
+				@header = true
+				header = ''
+				# gzip header
+				header << 0x1f
+				header << 0x8b
+				# deflate compression method
+				header << 0x08
+				# flags
+				@ftext    = 0
+				@fhcrc    = 0 # for now. maybe add later
+				@fextra   = 0
+				@fname    = 0 # TODO: handle @orig_name
+				@fcomment = 0 # TODO: handle @comment
+				header << [[@ftext, @fhcrc, @fextra, @fname, @fcomment].join].pack('b*')
+				# mtime
+				header << [@mtime.to_i].pack('V')
+				# whats xfl?
+				header << 0x00
+				# OS. FIXME always unix here. maybe base on RUBY_PLATFORM?...
+				header << 0x03
+				@io << header
+			end
+			@data << data
+		end
+
+		# no idea what wrap is supposed to do
+		def self.wrap io
+			gz = new io
+			if block_given?
+				begin;  yield gz
+				ensure; gz.close unless gz.closed?
+				end
+			else
+				gz
+			end
 		end
 	end
 
@@ -58,11 +163,11 @@ module Zlib
 				@xlen.times {@xtra_field << @input_buffer[@in_pos+=1]}
 			end
 			if @fname then
-				@original_name = ""
-				until @original_name["\0"].nil? == false
-					@original_name.concat(@input_buffer[@in_pos+=1])
+				@orig_name = ""
+				until @orig_name["\0"].nil? == false
+					@orig_name.concat(@input_buffer[@in_pos+=1])
 				end
-				@original_name.chop!
+				@orig_name.chop!
 			end
 			if @fcomment then
 				@comment = ""

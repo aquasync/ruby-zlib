@@ -18,8 +18,8 @@ module Zlib
 			@in_pos = -1
 			@bit_bucket = 0
 			@bit_count = 0
-
 		end
+
 		#Returns the adler-32 checksum of the input data.
 		def adler
 		end
@@ -224,6 +224,7 @@ module Zlib
 											@input_buffer[@in_pos+=1]
 				end
 			end
+
 			last_block = false
 			#Begin processing DEFLATE stream
 			until last_block
