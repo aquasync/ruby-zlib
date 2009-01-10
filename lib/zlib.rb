@@ -1,11 +1,9 @@
 require 'enumerator'
 require 'stringio'
 
-# for testing...
-require 'zlib'
-
-# for testing purposes this makes it clearer. Zlib is already defined when i'm
-# running specs as rspec is installed as a gem.
+# if the c implemention of Zlib is already defined, rename it to CZlib
+# and take over. this happens for me running the tests as rspec is
+# installed as a gem.
 if defined? Zlib
 	CZlib = Zlib
 	begin
@@ -19,32 +17,9 @@ end
 
 $:.unshift File.dirname(__FILE__)
 
+require 'zlib/version'
 require 'zlib/common'
 require 'zlib/checksum'
 require 'zlib/inflate'
 require 'zlib/deflate'
 require 'zlib/gzip'
-
-if $0 == __FILE__
-	p CZlib::Deflate.deflate('mydatamydata')
-	# => "x\234\313\255LI,I\314\005\223\000 \332\005\001"
-	# the "x\234" is header gunk...
-	p [Zlib.adler32('mydatamydata')].pack('N')
-	# => " \332\005\001"
-	# that last 4 bytes is the adler checksum...
-	# the rest is the actual compressed data
-	# -- "\313\255LI,I\314\005\223\000"
-	# actually manages 2 bytes off.
-	(q = Zlib::Deflate.new).deflate 'mydatamydata', Zlib::FINISH
-	data = q.output
-	p :deflated => data
-	p CZlib::Inflate.inflate(data)
-	p Zlib::Deflate.deflate(0.chr * 10000, 9).length
-	p CZlib::Deflate.deflate(0.chr * 10000, 9).length
-	p CZlib::Inflate.inflate(Zlib::Deflate.deflate(0.chr * 10000, 9)).length
-end
-
-#789c cbad 4c49 2c49 8490 0020 da05 01
-# => "x\234\313\255LI,I\204\220\000 \332\005\001"
-
-

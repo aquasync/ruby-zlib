@@ -107,15 +107,29 @@ module Zlib
 		end
 
 		# no idea what wrap is supposed to do
-		def self.wrap io
-			gz = new io
-			if block_given?
-				begin;  yield gz
-				ensure; gz.close unless gz.closed?
+		class << self
+			def open io
+				if String === io
+					# not sure of the semantics in this case.
+					# is it supposed to close the opened
+					# io object on GzipFile#close??
+					raise NotImplementedError unless block_given?
+					File.open(io, 'wb') do |f|
+						open(f) { |gz| yield gz }
+					end
+				else
+					gz = new io
+					if block_given?
+						begin;  yield gz
+						ensure; gz.close unless gz.closed?
+						end
+					else
+						gz
+					end
 				end
-			else
-				gz
 			end
+			
+			alias wrap open
 		end
 	end
 

@@ -1,5 +1,9 @@
 
 module Zlib
+	# For compatibility with Ruby-core Zlib
+	ZLIB_VERSION = '1.2.3'
+	VERSION = '0.6.0'
+
 	MAX_WBITS = 15
 	DEF_MEM_LEVEL = 6 # ? FIXME
 
