@@ -250,7 +250,7 @@ module Zlib
 			new(level).deflate data, FINISH
 		end
 
-		# note that we currently ignore all of the parameters...
+		# note that we currently ignore all of the parameters, except level
 		def initialize level=DEFAULT_COMPRESSION, windowBits=MAX_WBITS, memlevel=nil, strategy=DEFAULT_STRATEGY
 			@zstring = ''
 			@header = false
@@ -269,6 +269,8 @@ module Zlib
 			@nsyms = 0
 			@syms = [nil] * SYM_LIMIT
 			@symstart = 0
+			@level = level
+			@lastblock = false
 		end
 		
 		def output
@@ -495,6 +497,7 @@ module Zlib
 			when FULL_FLUSH
 				raise NotImplementedError
 			when FINISH
+				@lastblock = true
 				flushblock
 
 				# Sync to byte boundary, flushing out the final byte.
@@ -766,9 +769,6 @@ module Zlib
 			# special case in which that block has zero length.
 			dynamic = ssize * dynamic_len > dsize * static_len
 
-			# FIXME
-			@lastblock = true
-
 			# 3-bit block header
 			bfinal = @lastblock ? 1 : 0
 			btype = dynamic ? 2 : 1
@@ -874,6 +874,14 @@ module Zlib
 			end
 		
 			outblock bestlen, longestlen
+		end
+		
+		def inspect
+			# hide some of our massive variables.
+			vals = (instance_variables - %w[@data @win @syms @hashtab]).map do |iv|
+				" #{iv}=#{instance_variable_get(iv).inspect}"
+			end
+			"#{to_s[0..-2]}#{vals.join(',')}>"
 		end
 	end
 end
