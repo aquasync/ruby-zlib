@@ -12,7 +12,7 @@ module Zlib
 	BEST_SPEED           =  1
 	BEST_COMPRESSION     =  9
 	DEFAULT_COMPRESSION  = -1
-	
+
 	# strategies
 	FILTERED           = 1
 	HUFFMAN_ONLY       = 2
@@ -48,13 +48,13 @@ module Zlib
 	class ZStream
 		class BitReader # :nodoc:
 			attr_reader :io
-		
+
 			def initialize io
 				@io = io
 				@buf = 0
 				@have = 0
 			end
-		
+
 			def read want
 				val = @buf
 				while @have < want
@@ -62,22 +62,22 @@ module Zlib
 					val |= c << @have
 					@have += 8
 				end
-				
+
 				@buf = val >> want
 				@have -= want
 				val & ((1 << want) - 1)
 			end
 		end
-		
+
 		class BitWriter # :nodoc:
 			attr_reader :io
-		
+
 			def initialize io
 				@io = io
 				@buf = 0
 				@have = 0
 			end
-		
+
 			def write val, count=1
 		    @buf |= val << @have
 		    @have += count

@@ -92,7 +92,7 @@ module Zlib
 			accum2 = (adler >> 16) & 0xffff
 			len = string.length
 			x = 0
-			while len > 0 
+			while len > 0
 				tlen = [len, 5552].min
 				len -= tlen
 				tlen.times do

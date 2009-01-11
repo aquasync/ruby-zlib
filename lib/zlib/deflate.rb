@@ -12,16 +12,16 @@ module Zlib
 
 		Match = Struct.new(:distance, :len)
 
-		WINSIZE    = 32768	# window size. Must be power of 2!
-		HASHMAX    = 2039		# one more than max hash value
-		MAXMATCH   = 32		  # how many matches we track
-		HASHCHARS  = 3		  # how many chars make a hash
+		WINSIZE    = 32768  # window size. Must be power of 2!
+		HASHMAX    = 2039   # one more than max hash value
+		MAXMATCH   = 32     # how many matches we track
+		HASHCHARS  = 3      # how many chars make a hash
 
 		CodeRecord = Struct.new(:code, :extra_bits, :range)
 
 		LEN_CODES = [
 			3,   4,   5,   6,   7,   8,   9,   10,
-			11,  13,  15,  17,  19,  23, 	27,  31, 
+			11,  13,  15,  17,  19,  23,  27,  31,
 			35,  43,  51,  59,  67,  83,  99,  115,
 			131, 163, 195, 227, 258
 		].push(259).enum_with_index.to_enum(:each_cons, 2).map do |(l1, i), (l2, j)|
@@ -183,7 +183,7 @@ module Zlib
 
 				# And that's it. (Simple, wasn't it?) Copy the lengths into
 				# the output array and leave.
-				# 
+				#
 				# Here we cap lengths to fit in unsigned char.
 				(0...nsyms).map { |i| [length[i], 255].min }
 			end
@@ -240,7 +240,7 @@ module Zlib
 				@static_literal_lengths ||=
 					new(:lengths => [8] * 144 + [9] * 112 + [7] * 24 + [8] * 8)
 			end
-			
+
 			def self.static_distance
 				@static_distance ||= new(:lengths => [5] * 30)
 			end
@@ -272,11 +272,11 @@ module Zlib
 			@level = level
 			@lastblock = false
 		end
-		
+
 		def output
 			@output.io.string
 		end
-		
+
 		def set_dictionary dict
 			@dict = dict
 		end
@@ -332,7 +332,7 @@ module Zlib
 
 		def lz77_compress data, compress=true
 			len = data.length
-			
+
 			charat = proc do |k|
 				k < 0 ? @data[(@winpos + k) & (WINSIZE - 1)] : data[k]
 			end
@@ -462,14 +462,14 @@ module Zlib
 				@header = true
 
 				level_flags = @level == NO_COMPRESSION ? 0 : 2
-	
+
 				header = ((DEFLATED + ((MAX_WBITS - 8) << 4)) << 8) | (level_flags << 6)
 				header |= PRESET_DICT if @dict
 				header += 31 - (header % 31)
-				
+
 				outbits header >> 8, 8
 				outbits header & 0xff, 8
-	
+
 				if @dict and data.length >= 3 # HASHCHARS i suppose
 					dict = @dict + data[0, 3]
 					@dict.length.times do |i|
@@ -488,7 +488,7 @@ module Zlib
 			# NOTE this is currently destructive to the data (uses slice!)
 			# should probably be fixed...
 			lz77_compress data.dup, @level != NO_COMPRESSION
-			
+
 			# Update checksum
 			# This is for Zlib. Gzip uses a CRC32 instead
 			# Just write out the Adler32 checksum.
@@ -534,7 +534,7 @@ module Zlib
 				raise ArgumentError, 'bad flush value - %p' % flush
 			end
 		end
-		
+
 		def literal c
 			outsym SYM_LITLEN | c
 		end
@@ -551,7 +551,7 @@ module Zlib
 				# or 260, we must transmit len-3.
 				thislen = len > 260 ? 258 : len <= 258 ? len : len - 3
 				len -= thislen
-		
+
 				# Binary-search to find which length code we're
 				# transmitting.
 				# NOTE: no longer binary search atm. this is slower
@@ -559,21 +559,21 @@ module Zlib
 
 				# Transmit the length code.
 				outsym SYM_LITLEN | code.code
-		
+
 				# Transmit the extra bits.
 				if code.extra_bits > 0
 					outsym SYM_EXTRA_BITS | (thislen - code.range.begin) |
 						(code.extra_bits << SYM_EXTRA_BITS_SHIFT)
 				end
-		
+
 				# Binary-search to find which distance code we're
 				# transmitting.
 				# NOTE: no longer binary search atm. this is slower
 				code = DIST_CODES.find { |c| c.range === distance }
-		
+
 				# Write the distance code.
 				outsym SYM_DIST | code.code
-		
+
 				# Transmit the extra bits.
 				if code.extra_bits > 0
 					outsym SYM_EXTRA_BITS | (distance - code.range.begin) |
@@ -594,7 +594,7 @@ module Zlib
 		def writesym sym, huftrees
 			basesym = sym & ~SYM_MASK
 			litlen, dist, codelen = huftrees
-		
+
 			case sym & SYM_MASK
 			when SYM_LITLEN
 				outbits litlen.codes[basesym], litlen.lengths[basesym]
@@ -653,7 +653,7 @@ module Zlib
 				# adjusting symstart and nsyms.
 				@symstart = (@symstart + blklen) % SYM_LIMIT
 				@nsyms -= blklen
-				
+
 				return
 			end
 
@@ -703,7 +703,7 @@ module Zlib
 			treesyms = []
 			i = 0
 			while i < treesrc.length
-				# Find length of run of the same length code.	
+				# Find length of run of the same length code.
 				j = 1
 				j += 1 while treesrc[i + j] == treesrc[i]
 
@@ -878,10 +878,10 @@ module Zlib
 			bestvfm = 0
 
 			len = 300 * 8 # very approximate size of the Huffman trees
-		
+
 			@nsyms.times do |i|
 				sym = @syms[(@symstart + i) % SYM_LIMIT]
-		
+
 				if i > 0 && (sym & SYM_MASK) == SYM_LITLEN
 					# This is a viable point at which to end the block.
 					# Compute the value for money.
@@ -892,7 +892,7 @@ module Zlib
 					end
 					longestlen = i
 				end
-		
+
 				# Increment the occurrence counter for this symbol, if
 				# it's in one of the Huffman alphabets and isn't extra
 				# bits.
@@ -916,10 +916,10 @@ module Zlib
 					len += 8 * ((sym &~ SYM_MASK) >> SYM_EXTRA_BITS_SHIFT)
 				end
 			end
-		
+
 			outblock bestlen, longestlen
 		end
-		
+
 		def inspect
 			# hide some of our massive variables.
 			vals = (instance_variables - %w[@data @win @syms @hashtab]).map do |iv|

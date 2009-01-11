@@ -13,11 +13,11 @@ module Zlib
 			@orig_name = nil
 			@comment = nil
 		end
-	
+
 		def close
 			@closed = true
 		end
-		
+
 		def closed?
 			@closed
 		end
@@ -64,7 +64,7 @@ module Zlib
 			raise GzipFile::Error, 'header is already written' if @header
 			@orig_name = orig_name
 		end
-		
+
 		def close
 			raise GzipFile::Error, 'closed gzip stream' if closed?
 			# ensure header was written
@@ -78,7 +78,7 @@ module Zlib
 			@io << [@data.length].pack('V')
 			super
 		end
-		
+
 		def write data
 			unless @header
 				@header = true
@@ -128,21 +128,21 @@ module Zlib
 					end
 				end
 			end
-			
+
 			alias wrap open
 		end
 	end
 
 	class GzipReader < GzipFile
 		OSES = [
-			'FAT filesystem', 
-			'Amiga', 
-			'VMS (or OpenVMS)', 
-			'Unix', 
-			'VM/CMS', 
-			'Atari TOS', 
-			'HPFS fileystem (OS/2, NT)', 
-			'Macintosh', 
+			'FAT filesystem',
+			'Amiga',
+			'VMS (or OpenVMS)',
+			'Unix',
+			'VM/CMS',
+			'Atari TOS',
+			'HPFS fileystem (OS/2, NT)',
+			'Macintosh',
 			'Z-System',
 			'CP/M',
 			'TOPS-20',
@@ -171,8 +171,8 @@ module Zlib
 			@mtime = Time.at(@input_buffer[@in_pos+=1] | (@input_buffer[@in_pos+=1] << 8) | (@input_buffer[@in_pos+=1] << 16) | (@input_buffer[@in_pos+=1] << 24))
 			@xfl = @input_buffer[@in_pos+=1]
 			@os = OSES[@input_buffer[@in_pos+=1]]
-			if @fextra then 
-				@xlen = (@input_buffer[@in_pos+=1] | (@input_buffer[@in_pos+=1] << 8)) 
+			if @fextra then
+				@xlen = (@input_buffer[@in_pos+=1] | (@input_buffer[@in_pos+=1] << 8))
 				@xtra_field = []
 				@xlen.times {@xtra_field << @input_buffer[@in_pos+=1]}
 			end
@@ -192,7 +192,7 @@ module Zlib
 			end
 			if @fhcrc then
 				@header_crc = @input_buffer[@in_pos+=1] | (@input_buffer[@in_pos+=1] << 8)
-			end	
+			end
 			@contents = ""
 			until @in_pos == @input_buffer.length-1
 				@contents.concat(@input_buffer[@in_pos+=1])
@@ -200,21 +200,21 @@ module Zlib
 
 			#we do raw deflate, no headers
 			@zstream = Zlib::Inflate.new -MAX_WBITS
-			@inflated = StringIO.new(@zstream.inflate(@contents))			 
+			@inflated = StringIO.new(@zstream.inflate(@contents))
 		end
-		
+
 		def read length=nil
 			@inflated.read length
 		end
-	
+
 		def eof?
 			@inflated.eof?
 		end
-	
+
 		def pos
 			@inflated.pos
 		end
-	
+
 		def rewind
 			@inflated.rewind
 			@io.seek 0, IO::SEEK_SET
@@ -225,7 +225,7 @@ module Zlib
 				io = File.open filename
 				gz = self.new io
 				if block_given? then yield gz else gz end
-			end		
+			end
 		end
 	end
 end
