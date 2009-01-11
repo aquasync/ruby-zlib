@@ -75,7 +75,7 @@ module Zlib
 			# NO OP currently
 		end
 
-		def close
+		def finish
 			raise GzipFile::Error, 'closed gzip stream' if closed?
 			# ensure header was written
 			write ''

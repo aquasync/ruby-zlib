@@ -1,12 +1,9 @@
 = TODO
 
-- allow incremental deflation
-- add uncompressed blocks
-- allow sync/full flushes, to change compression level.
+- fix incremental deflation.
+- package works now, but check tht gem unpack works also.
 - merge the huffman implementation used for inflate with
   the deflate one.
 - merge other static data like codelen tables etc.
 - migrate the bit reading.
-- get gzip specs passing.
-- package with itself.
 
