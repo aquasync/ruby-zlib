@@ -180,7 +180,7 @@ module Zlib
 			#We can't use unpack, IronRuby doesn't have it yet.
 			@zstring.each_byte {|b| @input_buffer << b}
 
-		 	unless @rawdeflate then
+			unless @rawdeflate then
 				compression_method_and_flags = @input_buffer[@in_pos+=1]
 				flags = @input_buffer[@in_pos+=1]
 
@@ -231,7 +231,7 @@ module Zlib
 					when 0 then no_compression
 					when 1 then fixed_codes
 					when 2 then dynamic_codes
-	 				when 3 then raise Zlib::DataError, "invalid block type"
+					when 3 then raise Zlib::DataError, "invalid block type"
 				end
 			end
 			finish

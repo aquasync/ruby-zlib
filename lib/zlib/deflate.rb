@@ -355,8 +355,8 @@ module Zlib
 			end
 			@npending -= i
 
-		  matches = []
-		  defermatch = Match.new 0, 0
+			matches = []
+			defermatch = Match.new 0, 0
 			deferchr = 0
 			advance = 0
 
@@ -598,11 +598,11 @@ module Zlib
 			case sym & SYM_MASK
 			when SYM_LITLEN
 				outbits litlen.codes[basesym], litlen.lengths[basesym]
-		  when SYM_DIST
+			when SYM_DIST
 				outbits dist.codes[basesym], dist.lengths[basesym]
-		  when SYM_CODE_LEN
+			when SYM_CODE_LEN
 				outbits codelen.codes[basesym], codelen.lengths[basesym]
-		  when SYM_EXTRA_BITS
+			when SYM_EXTRA_BITS
 				outbits basesym & ~SYM_EXTRA_BITS_MASK, basesym >> SYM_EXTRA_BITS_SHIFT
 			end
 		end
@@ -620,11 +620,11 @@ module Zlib
 			case sym & SYM_MASK
 			when SYM_LITLEN
 				litlen.lengths[basesym]
-		  when SYM_DIST
+			when SYM_DIST
 				dist.lengths[basesym]
-		  when SYM_CODE_LEN
+			when SYM_CODE_LEN
 				codelen.lengths[basesym]
-		  when SYM_EXTRA_BITS
+			when SYM_EXTRA_BITS
 				basesym >> SYM_EXTRA_BITS_SHIFT
 			end
 		end
@@ -668,7 +668,7 @@ module Zlib
 			# Count up the frequency tables.
 			freqs1 = [0] * 286
 			freqs2 = [0] * 30
-			freqs1[256] = 1 	       # we're bound to need one EOB
+			freqs1[256] = 1          # we're bound to need one EOB
 
 			dynamic_len.times do |i|
 				sym = @syms[(@symstart + i) % SYM_LIMIT]
@@ -724,7 +724,7 @@ module Zlib
 							if rpt < 11
 								treesyms.push 17 | SYM_CODE_LEN;
 								treesyms.push SYM_EXTRA_BITS | (rpt - 3) |
-								 	(3 << SYM_EXTRA_BITS_SHIFT)
+									(3 << SYM_EXTRA_BITS_SHIFT)
 							else
 								treesyms.push 18 | SYM_CODE_LEN;
 								treesyms.push SYM_EXTRA_BITS | (rpt - 11) |
@@ -786,8 +786,8 @@ module Zlib
 			sht = [HuffmanTree.static_literal_length, HuffmanTree.static_distance, nil]
 
 			# First the dynamic block.
-			dsize = 3 + 5 + 5 + 4	    # 3-bit header, HLIT, HDIST, HCLEN
-			dsize += 3 * hclen	      # code-length-alphabet code lengths
+			dsize = 3 + 5 + 5 + 4     # 3-bit header, HLIT, HDIST, HCLEN
+			dsize += 3 * hclen        # code-length-alphabet code lengths
 			# Code lengths
 			treesyms.each { |sym| dsize += symsize(sym, dht) }
 			# The actual block data
@@ -799,7 +799,7 @@ module Zlib
 			dsize += symsize(SYM_LITLEN | 256, dht)
 
 			# Now the static block.
-			ssize = 3		       # 3-bit block header
+			ssize = 3          # 3-bit block header
 			# The actual block data
 			static_len.times do |i|
 				sym = @syms[(@symstart + i) % SYM_LIMIT]
@@ -834,7 +834,7 @@ module Zlib
 				treesyms.each { |sym| writesym sym, dht }
 
 				blklen, ht = dynamic_len, dht
-	   	else
+			else
 				blklen, ht = static_len, sht
 			end
 

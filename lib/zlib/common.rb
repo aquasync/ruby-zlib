@@ -79,10 +79,10 @@ module Zlib
 			end
 
 			def write val, count=1
-		    @buf |= val << @have
-		    @have += count
-		    while @have >= 8
-		    	@io  << (@buf & 0xff).chr
+				@buf |= val << @have
+				@have += count
+				while @have >= 8
+					@io  << (@buf & 0xff).chr
 					@buf >>= 8
 					@have -= 8
 				end
