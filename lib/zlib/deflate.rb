@@ -280,8 +280,17 @@ module Zlib
 		def set_dictionary dict
 			@dict = dict
 		end
-		
-		def params(*ignore)
+
+		def params level, strategy
+			if level != @level
+				deflate '', NO_FLUSH
+				flushblock
+				@level = level
+				# this pointless flushblock lets us get same bytestream as zlib.
+				# its not a sync flush, so i'm not sure why its done. waste of
+				# bits...
+				flushblock
+			end
 		end
 
 		def << data
@@ -452,8 +461,7 @@ module Zlib
 			unless @header
 				@header = true
 
-				# FIXME
-				level_flags = 2
+				level_flags = @level == NO_COMPRESSION ? 0 : 2
 	
 				header = ((DEFLATED + ((MAX_WBITS - 8) << 4)) << 8) | (level_flags << 6)
 				header |= PRESET_DICT if @dict
@@ -462,11 +470,6 @@ module Zlib
 				outbits header >> 8, 8
 				outbits header & 0xff, 8
 	
-				unless @zstring.empty?
-					data = @zstring + data
-					@zstring = ''
-				end
-
 				if @dict and data.length >= 3 # HASHCHARS i suppose
 					dict = @dict + data[0, 3]
 					@dict.length.times do |i|
@@ -475,6 +478,11 @@ module Zlib
 					end
 					outbits [Checksum.adler32(@dict)].pack('V').unpack('N')[0], 32
 				end
+			end
+
+			unless @zstring.empty?
+				data = @zstring + data
+				@zstring = ''
 			end
 
 			# NOTE this is currently destructive to the data (uses slice!)
