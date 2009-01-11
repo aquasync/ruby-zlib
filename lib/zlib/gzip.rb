@@ -15,11 +15,17 @@ module Zlib
 		end
 
 		def close
-			@closed = true
+			finish
+			@io.close if @io.respond_to?(:close)
 		end
 
 		def closed?
 			@closed
+		end
+		
+		def finish
+			raise Error, 'closed gzip stream' if closed?
+			@closed = true
 		end
 
 		def orig_name
@@ -65,6 +71,10 @@ module Zlib
 			@orig_name = orig_name
 		end
 
+		def flush
+			# NO OP currently
+		end
+
 		def close
 			raise GzipFile::Error, 'closed gzip stream' if closed?
 			# ensure header was written
@@ -73,9 +83,9 @@ module Zlib
 			data = Deflate.deflate(@data)
 			data.slice! 0..1   # remove header
 			data.slice! -4..-1 # remove adler
-			@io << data
-			@io << [Checksum.crc32(@data)].pack('V')
-			@io << [@data.length].pack('V')
+			@io.write data
+			@io.write [Checksum.crc32(@data)].pack('V')
+			@io.write [@data.length].pack('V')
 			super
 		end
 
@@ -101,7 +111,7 @@ module Zlib
 				header << 0x00
 				# OS. FIXME always unix here. maybe base on RUBY_PLATFORM?...
 				header << 0x03
-				@io << header
+				@io.write header
 			end
 			@data << data
 		end

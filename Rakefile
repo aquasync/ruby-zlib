@@ -7,10 +7,10 @@ require 'spec/rake/verify_rcov'
 require 'rbconfig'
 require 'fileutils'
 
-$:.unshift 'lib'
-
 # for now just get version info. later on i'll probably make it use
 # the ruby zlib for the packaging tasks
+#load './lib/zlib/version.rb'
+$:.unshift 'lib'
 require 'zlib/version'
 
 PKG_NAME = 'ruby-zlib'
@@ -71,13 +71,9 @@ spec = Gem::Specification.new do |s|
 	s.homepage = %q{http://github.com/aquasync/ruby-zlib}
 	s.rubyforge_project = %q{ruby-zlib}
 
-	s.executables = ['oletool']
-	s.files  = ['README', 'Rakefile', 'ChangeLog', 'data/propids.yaml']
+	s.files  = ['README', 'Rakefile']
 	s.files += FileList['lib/**/*.rb']
-	s.files += FileList['test/test_*.rb', 'test/*.doc']
-	s.files += FileList['test/oleWithDirs.ole', 'test/test_SummaryInformation']
-	s.files += FileList['bin/*']
-	s.test_files = FileList['test/test_*.rb']
+	s.files += FileList['specs/**/*.rb']
 
 	s.has_rdoc = true
 	s.extra_rdoc_files = ['README']
