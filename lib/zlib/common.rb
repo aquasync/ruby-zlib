@@ -34,7 +34,7 @@ module Zlib
 	DEFLATED           = 8
 
 	#Generic Error
-	class Error < Exception
+	class Error < StandardError
 	end
 
 	#Dictionary Needed

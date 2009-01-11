@@ -253,7 +253,7 @@ module Zlib
 			@bit_count = 0
 			if @in_pos + 4 > @input_buffer.length then raise Zlib::DataError.new("not enough input to read length code") end
 			length = @input_buffer[@in_pos+=1] | (@input_buffer[@in_pos+=1] << 8)
-			
+
 			if (~length & 0xff != @input_buffer[@in_pos+=1]) || (((~length >> 8) & 0xff) != @input_buffer[@in_pos+=1]) then raise Zlib::DataError.new("invalid stored block lengths") end
 		
 			if @in_pos + length > @input_buffer.length then raise Zlib::DataError.new("ran out of input") end

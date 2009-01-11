@@ -29,6 +29,17 @@ describe 'Zlib::Deflate#deflate' do
 #    zipped.should == "x\234\355\301\001\001\000\000\000\200\220\376\257\356\b\n#{"\000" * 31}\030\200\000\000\001"
 #  end
 
+  it 'deflates data incrementally' do
+		strings = ['some data ', 'some more data ', 'and even more data']
+
+		zipped = ''
+		strings.each { |s| zipped << @deflator.deflate(s, Zlib::NO_FLUSH) }
+		zipped << @deflator.finish
+#		zipped = @deflator.deflate(strings.join, Zlib::FINISH)
+
+    CZlib::Inflate.inflate(zipped).should == strings.join
+  end
+
 end
 
 describe 'Zlib::Deflate::deflate' do
@@ -49,6 +60,19 @@ describe 'Zlib::Deflate::deflate' do
 #
 #    zipped.should == "x\234\355\301\001\001\000\000\000\200\220\376\257\356\b\n#{"\000" * 31}\030\200\000\000\001"
 #  end
+
+  it 'can specify an compression level' do
+    data = 'blah blah blah blah blah'
+
+    zipped = Zlib::Deflate.deflate data
+    zipped.length.should < data.length
+    CZlib::Inflate.inflate(zipped).should == data
+
+    zipped = Zlib::Deflate.deflate data, Zlib::NO_COMPRESSION
+    zipped.length.should > data.length
+    zipped[7, data.length].should == data
+    CZlib::Inflate.inflate(zipped).should == data
+  end
 
 end
 

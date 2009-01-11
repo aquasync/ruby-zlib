@@ -479,7 +479,7 @@ module Zlib
 
 			# NOTE this is currently destructive to the data (uses slice!)
 			# should probably be fixed...
-			lz77_compress data.dup
+			lz77_compress data.dup, @level != NO_COMPRESSION
 			
 			# Update checksum
 			# This is for Zlib. Gzip uses a CRC32 instead
@@ -493,8 +493,20 @@ module Zlib
 				# first go... could maybe try to replicate that but it seems weird
 				''
 			when PARTIAL_FLUSH, SYNC_FLUSH
-				raise NotImplementedError
+				# Close the current block.
+				flushblock
+
+				# Then output an empty _uncompressed_ block: send 000,
+				# then sync to byte boundary, then send bytes 00 00 FF
+				# FF.
+				outbits 0, 3
+				pending = @output.instance_variable_get(:@have)
+				outbits 0, 8 - pending if pending != 0
+				outbits 0, 16
+				outbits 0xffff, 16
+				''
 			when FULL_FLUSH
+				# not sure how this differs from the above...
 				raise NotImplementedError
 			when FINISH
 				@lastblock = true
@@ -613,6 +625,30 @@ module Zlib
 		# `dynamic_len', _or_ a static block of length `static_len', but
 		# it gets to choose which.
 		def outblock dynamic_len, static_len
+			if @level == NO_COMPRESSION
+				bfinal = @lastblock ? 1 : 0
+				outbits bfinal, 1
+				outbits 0, 3
+				blklen = static_len # can't think why this wouldn't be equal to @nsyms
+				pending = @output.instance_variable_get(:@have)
+				outbits 0, 8 - pending if pending != 0
+				outbits blklen & 0xff, 8
+				outbits((blklen >> 8) & 0xff, 8)
+				outbits ~blklen & 0xff, 8
+				outbits((~blklen >> 8) & 0xff, 8)
+				blklen.times do |i|
+					sym = @syms[(@symstart + i) % SYM_LIMIT]
+					@output.io << sym.chr
+				end
+
+				# Remove all the just-output symbols from the symbol buffer by
+				# adjusting symstart and nsyms.
+				@symstart = (@symstart + blklen) % SYM_LIMIT
+				@nsyms -= blklen
+				
+				return
+			end
+
 			# We make our choice of block to output by doing all the
 			# detailed work to determine the exact length of each possible
 			# block. Then we choose the one which has fewest output bits
