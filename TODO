@@ -1,7 +1,8 @@
 = TODO
 
 - fix incremental deflation.
-- package works now, but check tht gem unpack works also.
+- fix the simple speed problems.
+- package works now, but check that gem unpack works also.
 - merge the huffman implementation used for inflate with
   the deflate one.
 - merge other static data like codelen tables etc.
